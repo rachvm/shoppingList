@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "item": "milk",
+    "completed": true
+  },
+  {
+    "id": 2,
+    "item": "eggs",
+    "completed": false
+  }
+]
