@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -89,16 +90,20 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
-	if method == "POST" && path == "/data" {
+	switch {
+	case method == "GET" && path == "/data":
+		handleGet(conn)
+	case method == "POST" && path == "/data":
 		contentLength := 0
 		if lengthStr, ok := headers["Content-Length"]; ok {
 			fmt.Sscanf(lengthStr, "%d", &contentLength)
 		}
 		handlePost(conn, reader, contentLength)
-		return
+	case method == "DELETE" && strings.HasPrefix(path, "/data/"):
+		handleDelete(conn, path)
+	default:
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
-
-	conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 }
 
 // This is required to split the Get or post request from the data
@@ -187,4 +192,63 @@ func handlePost(conn net.Conn, reader *bufio.Reader, contentLength int) {
 	}
 
 	conn.Write([]byte("HTTP/1.1 201 Created\r\n\r\n"))
+}
+
+func handleDelete(conn net.Conn, path string) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Extract ID from the path
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+		return
+	}
+	idStr := parts[2]
+
+	// Convert ID to integer
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+		return
+	}
+	// Read existing entries
+	file, err := os.ReadFile(dataFile)
+	if err != nil {
+		fmt.Println("Error reading file: ", err)
+		conn.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n\r\n"))
+		return
+	}
+
+	var entries []Entry
+	err = json.Unmarshal(file, &entries)
+	if err != nil {
+		fmt.Println("Error parsing JSON: ", err)
+		conn.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n\r\n"))
+		return
+	}
+
+	// Filter out the entry with the given ID
+	var newEntries []Entry
+	for _, entry := range entries {
+		if entry.ID != id {
+			newEntries = append(newEntries, entry)
+		}
+	}
+
+	// Save the updated entries back to the file
+	file, err = json.MarshalIndent(newEntries, "", "  ")
+	if err != nil {
+		fmt.Println("Error marshalling JSON: ", err)
+		conn.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n\r\n"))
+		return
+	}
+	err = os.WriteFile(dataFile, file, 0644)
+	if err != nil {
+		fmt.Println("Error writing file: ", err)
+		conn.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n\r\n"))
+		return
+	}
+
+	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
